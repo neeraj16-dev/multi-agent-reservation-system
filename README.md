@@ -1,68 +1,108 @@
-# Multi-Agent Hotel Reservation System (LangGraph)
+# 🏨 AI-Powered Real-Time Hotel Concierge
 
-An intelligent, multi-agent hotel management system built with LangGraph and Google Gemini. This system handles both room accommodations and dining reservations using specialized sub-agents, backed by a robust dual-memory architecture and Postgres for persistent state.
+An ultra-low latency, real-time voice AI assistant for hospitality, built with the **Gemini Multimodal Live API**, **FastAPI WebSockets**, and **LangGraph**.
 
-## 🎯 Phase 1 Strategy
-- **Core Focus:** Build and debug the state graph, multi-agent routing, and Pydantic schemas using **text-based models** first.
-- **Deferred:** Real-time voice APIs (e.g., Gemini Multimodal Live API) and UI development will be integrated only after the core state machine is bulletproof.
-- **Decoupled Architecture:** The LangGraph "brain" remains completely isolated from HTTP requests and authentication headers.
+This system moves beyond traditional turn-based chatbots by maintaining a continuous, bidirectional audio stream. It uses a **Hierarchical Multi-Agent (Supervisor)** architecture to seamlessly handle context switching between hotel room bookings and dining reservations, executing secure transactions against a PostgreSQL database.
 
-## 🧠 Multi-Agent Architecture
-The system utilizes a hierarchical agent structure to route intents and manage domain-specific tools:
+## ✨ Key Features
 
-1. **Supervisor Agent (Router):** Analyzes initial user intent and routes the conversation to the appropriate specialized sub-agent. Does not execute tools directly.
-2. **Room Agent:** Manages accommodation requests. Bound to tools: `check_room_availability`, `book_room`, `cancel_room`, `get_room_details`.
-3. **Dining Agent:** Manages restaurant and table reservations. Bound to tools: `check_table_availability`, `book_table`, `cancel_table`.
-4. **Concierge Agent (Future):** A RAG-powered agent to deflect general FAQ queries (pool hours, pet policies) to save tool-calling costs on transactional agents.
+- **Real-Time Voice Streaming:** Bidirectional WebSocket integration with `gemini-3.8-live` (`v1beta` endpoint) for instant voice-to-voice interaction.
+- **Multi-Agent Supervisor Routing:** A central LangGraph Supervisor intelligently routes conversational state between specialized worker agents (Room Agent & Dining Agent) based on user intent.
+- **Decoupled Tool Execution (Security):** The LLM has zero direct database access. It emits JSON tool proposals (`book_room`, `cancel_table`) which are intercepted, validated, and executed natively by the FastAPI backend.
+- **Audio Queueing Engine:** Custom React Web Audio API implementation that converts browser `Float32` audio to Gemini's required `Int16 PCM`, featuring a time-based scheduling queue to eliminate audio overlap ("gibberish").
+- **Human-in-the-Loop (HITL):** High-risk actions (like reservation cancellations) trigger LangGraph state interrupts, physically pausing the execution graph until manual terminal approval is received.
+- **Long-Term Memory (LTM):** Uses LangGraph's `PostgresStore` to extract and inject user preferences (e.g., "prefers a King bed") across multiple sessions.
+- **Prompt Injection Defense:** Protected by strict behavioral system boundaries and native Google GenAI safety threshold guardrails.
 
-## 💾 State & Memory Management
-The system tracks conversations and user preferences using a dual-memory approach, migrating from local in-memory storage to production-ready PostgreSQL.
+## 🛠 Tech Stack
 
-- **Short-Term Memory (STM):** Uses `langgraph-checkpoint-postgres` (`PostgresSaver`) to persist the conversational state and message history. The `AgentState` schema tracks the `current_agent` to ensure multi-turn follow-ups bypass the supervisor. 
-- **Long-Term Memory (LTM):** Uses a Postgres-backed `BaseStore` to secretly extract and persist explicit user preferences (e.g., bed sizes, dietary restrictions, preferred dining times) across multiple sessions.
-- **Human-in-the-Loop (HITL):** Destructive actions (like `cancel_room` or `cancel_table`) trigger an `interrupt()`, pausing the graph execution until explicit user/admin approval is provided.
+- **AI & Orchestration:** Google GenAI SDK (`v1beta`), LangGraph, LangChain
+- **Backend:** FastAPI, Python, Uvicorn, WebSockets
+- **Frontend:** React.js, Vite, Web Audio API
+- **Database & State:** PostgreSQL (`psycopg_pool`)
 
-## 🔐 Authentication & Access Control
-- JWT authentication and role-based access control (RBAC) are handled entirely at the API layer (FastAPI/Next.js).
-- LangGraph remains agnostic to tokens. The backend decodes the JWT and passes the `user_id` and `role` (e.g., "guest" vs. "admin") into the graph via LangGraph's `RunnableConfig`.
-- Tools check `config["configurable"]["role"]` to authorize specific administrative actions.
+## 🏗 System Architecture
 
-## 📁 Directory Structure
-```text
-multi-agent-reservation-system/
-├── frontend/                   # Next.js frontend (Admin dashboard & User UI)
-├── backend/                    # FastAPI/Django backend (JWT Auth & API layer)
-├── hotel_assistant/            # LangGraph Multi-Agent Service (Formerly reservation_agent)
-│   ├── .env
-│   ├── requirements.txt
-│   ├── main.py                 # CLI entry point for local graph testing
-│   ├── state.py                # Defines AgentState (tracks 'current_agent' & 'messages')
-│   ├── graph.py                # Main graph builder, PostgresSaver checkpointer, and routing
-│   ├── __init__.py
-│   ├── agents/
-│   │   ├── __init__.py
-│   │   ├── supervisor.py       # Analyzes intent and routes to sub-agents
-│   │   ├── room_agent.py       # Handles accommodation logic and prompts
-│   │   └── dining_agent.py     # Handles restaurant/table logic and prompts
-│   ├── tools/
-│   │   ├── __init__.py
-│   │   ├── room_tools.py       # check_rooms, book_room, cancel_room
-│   │   ├── dining_tools.py     # check_tables, book_table, cancel_table
-│   │   └── hitl_logic.py       # Human-in-the-loop interrupt nodes for cancellations
-│   ├── memory/
-│   │   ├── __init__.py
-│   │   ├── ltm_manager.py      # BaseStore extraction, update_ltm node
-│   │   ├── stm_summarizer.py   # Token trimming and summarization nodes
-│   │   └── schemas.py          # Pydantic models (UserPreferences, ExtractionSchemas)
-│   ├── db/
-│   │   ├── __init__.py
-│   │   ├── config.py           # Postgres connection pooling (psycopg/asyncpg)
-│   │   ├── room_queries.py     # Business data CRUD operations for rooms
-│   │   └── dining_queries.py   # Business data CRUD operations for tables
-│   └── tests/
-│       ├── test_supervisor.py
-│       ├── test_room_agent.py
-│       ├── test_dining_agent.py
-│       └── test_memory.py
-├── .gitignore
-└── README.md
+1. **Client (React):** Captures microphone audio, down-samples to 16kHz Int16 PCM, and streams over WebSockets.
+2. **Gateway (FastAPI):** Proxies audio to Google's Live API and intercepts `ToolCall` events.
+3. **Orchestration (LangGraph):** Manages conversational state, Long-Term Memory, and routes the user to the correct domain agent.
+4. **Execution (Postgres):** FastAPI safely runs the decoupled database queries and returns the `reservation_id` to Gemini for voice confirmation.
+
+---
+
+## 🚀 Local Setup & Installation
+
+### Prerequisites
+
+- Python 3.10+
+- Node.js & npm
+- PostgreSQL installed and running locally
+- Google Gemini API Key
+
+### 1. Database Setup
+
+Create a PostgreSQL database named `hotel_db` and run your schema creation scripts to set up the `reservations` and `dining` tables.
+
+### 2. Backend Setup
+
+Navigate to the project root and install the Python dependencies:
+
+```bash
+python -m venv .venv
+
+# Windows
+.venv\Scripts\activate
+
+# Linux / macOS
+source .venv/bin/activate
+
+pip install fastapi uvicorn websockets google-genai langgraph psycopg_pool
+```
+
+Create a `.env` file in the root directory:
+
+```ini
+GEMINI_API_KEY="your_google_api_key_here"
+DATABASE_URL="postgresql://postgres:password123@localhost:5432/hotel_db"
+```
+
+Start the FastAPI server:
+
+```bash
+python -m uvicorn backend.main:app --reload --port 8000
+```
+
+### 3. Frontend Setup
+
+Open a new terminal, navigate to the frontend directory, and install dependencies:
+
+```bash
+cd frontend
+npm install
+```
+
+Start the Vite development server:
+
+```bash
+npm run dev
+```
+
+## 🎙️ Usage
+
+1. Open `http://localhost:5173` in your browser.
+2. Click **Start Voice Conversation** and grant microphone permissions.
+3. Try speaking these scenarios naturally:
+
+   - *"Hi, I'd like to book a room for this weekend for two people. I need a King bed."* (Tests Room Agent & LTM)
+   - *"Actually, can you also book a dinner table for tonight at 8 PM?"* (Tests Supervisor Context Switch)
+   - *"Cancel that dinner table."* (Tests HITL terminal interrupt in the backend)
+
+## 🔒 Roadmap / Future Enhancements
+
+- [ ] Implement JWT Authentication on the WebSocket connection.
+- [ ] Add Role-Based Access Control (RBAC) to restrict cancellations to Admin users.
+- [ ] Build an Admin Dashboard for managing HITL approvals visually.
+
+---
+
+**Designed and built by Neeraj Mayekar.**
